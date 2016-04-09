@@ -1,0 +1,183 @@
+"""
+Author: Tanner Bruce
+"""
+
+from random import random
+
+import re
+
+add_library('serial')
+
+width = 1920
+height = 1080
+radius = 400
+
+grey = color(110,110,110)
+green = color(120,164,92)
+dgreen = color(250,20,4)
+
+
+def sub_sev(u,v):
+    return tuple(x-y for x,y in zip(u,v))
+
+
+def add_vec(u,v):
+    return tuple(x+y for x,y in zip(u,v))
+
+
+def vsub(u,k):
+    return tuple(x-k for x in u)
+
+
+def vdiv(u,k):
+    return tuple(x/k for x in u)
+
+
+def vscale(u,k):
+    return tuple(x*k for x in u)
+
+
+# Vector dot and cross products
+def vdot(u,v):
+    return sum(p*q for p, q in zip(u,v))
+
+
+def vcross(a, b):
+    c = tuple([a[1]*b[2] - a[2]*b[1],
+         a[2]*b[0] - a[0]*b[2],
+         a[0]*b[1] - a[1]*b[0]])
+    return c
+
+# Rotate a given vector by a given quaternion
+def rot_vec_by_quat(v,q):
+    if q is None:
+        return
+    s,ux,uy,uz = q
+    u = tuple([ux,uy,uz])
+    
+    vprime = add_vec(add_vec(
+                    vscale(u, 2.0 * vdot(u,v)), 
+                    vscale(v, s*s - vdot(u,u))), 
+                    vscale(vcross(u,v), 2.0 * s))
+    
+    return vprime
+
+
+port = None
+cur_quat = None
+font = None
+
+
+def setup():
+    size(width, height, P3D)
+    background(0)
+    lights()
+    noStroke()
+    frameRate(60)
+    
+    print "Checking for COM5 port"
+    while Serial.list()[1] is None:
+        delay(50)
+        print "here"
+    
+    print "Port is active"
+    global port
+    print Serial.list()[1]
+    print "Opening port"
+    port = Serial(this, Serial.list()[1], 115200)
+
+    global font
+    font = loadFont("AnonymousPro-38.vlw")
+    textFont(font,38)
+
+
+# Origin of the sphere
+origin = tuple([width/2, height/2, 0])
+
+
+# Current tick the sketch is on
+def tick():
+    tick._tick += 0.005 % TWO_PI
+    return tick._tick
+tick._tick = 0
+
+
+# Sphereical coordinate to Cartesian
+def sph2car(s):
+    t = s[0]*sin(s[1])
+    return [
+        t*cos(s[2]),
+        t*sin(s[2]),
+        s[0]*cos(s[1])
+    ]
+
+
+#Instead of generating one arrow, generate a random amount of unifrom coordinates
+#See: http://mathworld.wolfram.com/SpherePointPicking.html
+#sph_coords = [[2*PI*random(),acos(2*random()-1)] for _ in range(50)]
+#car_coords = [sph2car([radius,x[0],x[1]]) for x in sph_coords]
+
+# todo fixme up vector needs variable
+car_coords = [[0,-400,0]]
+
+
+# Parse a quaternion from the arduino program
+def parse_quat(s):
+    # e.g "quat    0.65    0.01    0.01    -0.76"
+    mo = re.match(r"[quat \s]+([\S]+)[ \s]+([\S]+)[ \s]+([\S]+)[ \s]+([\S]+)",s)
+    if mo: return [float(x) for x in mo.groups()]
+
+
+# Draw a line from the origin to the given point
+def draw_vec(pnt,pt_sz=5):
+    pushMatrix()
+    beginShape(LINES)
+    vertex(0,0,0)
+    vertex(*pnt)
+    endShape()
+    translate(*pnt)
+    rect(0,0,pt_sz,pt_sz)
+    popMatrix()
+
+
+once = True
+def draw():
+    global once
+    global port
+    global cur_quat
+    while once and port.available() > 0:
+        print port.available()
+        st = port.readString() # todo cleanup
+        if 's' in st:
+            print "has s"
+            port.write(65)
+            once = False
+            
+    if port.available() > 0:
+        s = port.readStringUntil(10)
+        if s:
+            s = parse_quat(s)
+            if s:
+                cur_quat = s
+                port.clear()  
+        
+    background(0)
+    noFill()
+    stroke(grey)
+
+    translate(*origin)
+    pushMatrix()
+    if cur_quat:
+        text("{} {} {} {}".format(*cur_quat), 450, -500)
+    rotateY(tick())
+    sphere(radius)
+    
+    # draw the points on the sphere
+    stroke(green)
+    rectMode(CENTER)
+    for pnt in car_coords:
+        pushMatrix()
+        fill(dgreen)
+        draw_vec(rot_vec_by_quat(pnt,cur_quat) if cur_quat else pnt,3)
+        popMatrix()
+    popMatrix()
